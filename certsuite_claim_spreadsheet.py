@@ -368,44 +368,118 @@ def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobi
         sys.exit(1)
 
 
+def read_dcirc_env_variables(dcirc_path: str = "dcirc.sh") -> Dict[str, str]:
+    """Read environment variables from dcirc.sh file."""
+    env_vars = {}
+    
+    if not os.path.exists(dcirc_path):
+        raise FileNotFoundError(f"DCI configuration file not found: {dcirc_path}")
+    
+    try:
+        with open(dcirc_path, 'r') as f:
+            content = f.read()
+            
+        # Parse export statements using regex
+        # Pattern to match: export VAR_NAME="value" or export VAR_NAME=value
+        pattern = r'export\s+([A-Z_]+)=(?:"([^"]*)"|([^\s]+))'
+        
+        for match in re.finditer(pattern, content):
+            var_name = match.group(1)
+            # Use quoted value if present, otherwise use unquoted value
+            var_value = match.group(2) if match.group(2) is not None else match.group(3)
+            env_vars[var_name] = var_value
+            
+        return env_vars
+        
+    except Exception as e:
+        raise ValueError(f"Error reading DCI configuration file {dcirc_path}: {e}")
+
+def get_dci_environment() -> Dict[str, str]:
+    """Get DCI environment variables from environment or dcirc.sh file."""
+    required_vars = ['DCI_CLIENT_ID', 'DCI_API_SECRET', 'DCI_CS_URL']
+    env_vars = {}
+    
+    # First, try to get from environment variables
+    missing_vars = []
+    for var in required_vars:
+        value = os.environ.get(var)
+        if value:
+            env_vars[var] = value
+        else:
+            missing_vars.append(var)
+    
+    # If some variables are missing, try to read from dcirc.sh
+    if missing_vars:
+        print(f"Missing environment variables: {', '.join(missing_vars)}")
+        print("Attempting to read from dcirc.sh file...")
+        
+        try:
+            dcirc_vars = read_dcirc_env_variables()
+            
+            # Update with values from dcirc.sh
+            for var in missing_vars:
+                if var in dcirc_vars:
+                    env_vars[var] = dcirc_vars[var]
+                    print(f"✓ Found {var} in dcirc.sh")
+                else:
+                    raise ValueError(f"Required DCI variable '{var}' not found in dcirc.sh")
+                    
+        except Exception as e:
+            print(f"Error reading dcirc.sh: {e}")
+            raise ValueError(f"Cannot find required DCI environment variables. "
+                           f"Please either:\n"
+                           f"1. Export the variables: {', '.join(missing_vars)}\n"
+                           f"2. Ensure dcirc.sh exists with proper export statements")
+    
+    return env_vars
+
 def download_dci_cert_claim_json(input_claim: str, job_id: str) -> None:
     """Download claim.json file from DCI control server using job ID."""
-    # Read dcirc.sh env file
-    # get the absolute path of the current directory and append 'dcirc.sh' to it
-    # dcirc_path = os.path.abspath('dcirc.sh')
-    # os.system(f'source {dcirc_path}')
-    # export_cmd = f'source {dcirc_path} && export DCI_CLIENT_ID DCI_API_SECRET DCI_CS_URL'
-    # subprocess.run(export_cmd, shell=True, check=True)
+    try:
+        # Get DCI environment variables (from environment or dcirc.sh)
+        env_vars = get_dci_environment()
+        
+        # Create environment dictionary for subprocess
+        env = os.environ.copy()  # Start with current environment
+        env.update(env_vars)     # Add DCI variables
+        
+        print(f"Using DCI server: {env_vars.get('DCI_CS_URL', 'N/A')}")
+        
+        # run the dcictl command and capture the output
+        cmd = ['dcictl', 'file-list', job_id, '--limit', '200']
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        stdout, stderr = process.communicate()
+        
+        if process.returncode != 0:
+            print(f"Error running dcictl file-list: {stderr.decode('utf-8')}")
+            sys.exit(1)
 
-    env = {
-          'DCI_CLIENT_ID': os.environ['DCI_CLIENT_ID'],
-          'DCI_API_SECRET': os.environ['DCI_API_SECRET'],
-          'DCI_CS_URL': os.environ['DCI_CS_URL'],
-    }
+        # extract the file IDs from the output using grep
+        output_lines = stdout.decode('utf-8').split('\n')
+        claim_file_lines = [line for line in output_lines if 'claim.json' in line and 'text/plain' in line]
+        
+        if not claim_file_lines:
+            print("No claim.json files found in the job")
+            sys.exit(1)
+            
+        file_ids = [line.split()[1] for line in claim_file_lines]
+        print(f"Found {len(file_ids)} claim.json file(s): {file_ids}")
 
-    # run the dcictl command and capture the output
-    cmd = ['dcictl', 'file-list', job_id, '--limit', '200']
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-    stdout, stderr = process.communicate()
+        # run the dcictl command to download the claim.json file(s)
+        cmd = ['dcictl', 'job-download-file', job_id, '--file-id', ','.join(file_ids), '--target', input_claim]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
 
-    # extract the file IDs from the output using grep
-    output_lines = stdout.decode('utf-8').split('\n')
-    claim_file_lines = [line for line in output_lines if 'claim.json' in line and 'text/plain' in line]
-    file_ids = [line.split()[1] for line in claim_file_lines]
-
-    # print the file IDs to the console
-    # print(file_ids)
-
-    # run the dcictl command to download the claim.json file(s)
-    cmd = ['dcictl', 'job-download-file', job_id, '--file-id', ','.join(file_ids), '--target', input_claim]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-
-    # check if the command was successful
-    if result.returncode == 0:
-        print("dcictl command succeeded to download claim.json")
-    else:
-        print(f"dcictl command failed to download claim.json with return code {result.returncode}")
-        sys.exit(0)
+        # check if the command was successful
+        if result.returncode == 0:
+            print("dcictl command succeeded to download claim.json")
+        else:
+            print(f"dcictl command failed to download claim.json with return code {result.returncode}")
+            print(f"Error: {result.stderr.decode('utf-8')}")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"Error downloading claim.json: {e}")
+        sys.exit(1)
 
 def check_file_exists(filename: str) -> None:
     """Check if a file exists and exit if it doesn't."""

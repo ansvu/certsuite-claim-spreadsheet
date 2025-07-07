@@ -1,0 +1,16 @@
+# Sample DCI Configuration File
+# Copy this file to 'dcirc.sh' and replace with your actual DCI credentials
+
+export DCI_CLIENT_ID="your-dci-client-id-here"
+export DCI_API_SECRET="your-dci-api-secret-here"
+export DCI_CS_URL="https://api.distributed-ci.io"
+
+# Optional: Additional DCI environment variables can be added here
+# export DCI_LOGIN="your-dci-login"
+# export DCI_PASSWORD="your-dci-password"
+
+# Instructions:
+# 1. Copy this file: cp dcirc.sh.sample dcirc.sh
+# 2. Edit dcirc.sh with your actual credentials
+# 3. Keep dcirc.sh in the same directory as the script
+# 4. The script will automatically read these variables if they're not exported in your shell 
