@@ -27,7 +27,7 @@ def replace_text_in_file(input_file: str, search_text: str, replace_text: str, o
         # Write the modified data to the output file
         f.write(newdata)
 
-def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int, int, int]:
+def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int, int, int, int]:
     """Extract and process test results from the claim data."""
     try:
         results = []
@@ -66,20 +66,22 @@ def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], in
                 print(f"Warning: Error processing test {key}: {e}")
                 continue
 
-        # Sort tests by state (skipped, passed, failed) and then alphabetically
+        # Sort tests by state (failed, error, skipped, passed) and then alphabetically
+        failed_tests = sorted([r for r in results if r['State'] == 'failed'], key=lambda r: r['Test_Id'])
+        error_tests = sorted([r for r in results if r['State'] == 'error'], key=lambda r: r['Test_Id'])
         skipped_tests = sorted([r for r in results if r['State'] == 'skipped'], key=lambda r: r['Test_Id'])
         passed_tests = sorted([r for r in results if r['State'] == 'passed'], key=lambda r: r['Test_Id'])
-        failed_tests = sorted([r for r in results if r['State'] == 'failed'], key=lambda r: r['Test_Id'])
 
         # Calculate totals
         total_failed = len(failed_tests)
+        total_error = len(error_tests)
         total_skipped = len(skipped_tests)
         total_passed = len(passed_tests)
 
-        # Combine sorted tests into a single list
-        sorted_tests = failed_tests + skipped_tests + passed_tests
+        # Combine sorted tests into a single list (failed, error, skipped, passed)
+        sorted_tests = failed_tests + error_tests + skipped_tests + passed_tests
         
-        return sorted_tests, total_failed, total_skipped, total_passed
+        return sorted_tests, total_failed, total_error, total_skipped, total_passed
     
     except Exception as e:
         raise ValueError(f"Error extracting test results: {e}")
@@ -118,6 +120,7 @@ def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
     # Define font and fill styles
     bold_font = Font(bold=True)
     red_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
+    dark_red_fill = PatternFill(start_color='8B0000', end_color='8B0000', fill_type='solid')  # Dark red for errors
     orange_fill = PatternFill(start_color='FFE599', end_color='FFE599', fill_type='solid')
     blue_fill = PatternFill(start_color='AED6F1', end_color='AED6F1', fill_type='solid')
     green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
@@ -142,6 +145,8 @@ def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
             elif cell.column == 3:
                 if cell.value == 'failed':
                     cell.fill = red_fill
+                elif cell.value == 'error':
+                    cell.fill = dark_red_fill
                 elif cell.value == 'skipped':
                     cell.fill = orange_fill
                 elif cell.value == 'passed':
@@ -150,6 +155,7 @@ def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
     return {
         'bold_font': bold_font,
         'red_fill': red_fill,
+        'dark_red_fill': dark_red_fill,
         'orange_fill': orange_fill,
         'blue_fill': blue_fill,
         'green_fill': green_fill,
@@ -183,38 +189,41 @@ def set_column_formatting(ws: Worksheet) -> None:
                     cell.alignment = Alignment(wrapText=True)
 
 def add_summary_section(ws: Worksheet, sorted_tests: List[Dict[str, Any]], 
-                       failed_tests: int, skipped_tests: int, passed_tests: int, 
+                       failed_tests: int, error_tests: int, skipped_tests: int, passed_tests: int, 
                        dci_jobid: str, styles: Dict[str, Any]) -> None:
     """Add summary section at the top of the worksheet."""
     # Add summary section
-    ws.insert_rows(1, amount=8)  # Insert 8 empty rows at the top
+    ws.insert_rows(1, amount=9)  # Insert 9 empty rows at the top (one more for error)
     ws['A1'] = 'Summary'
     ws['A2'] = 'Total'
     ws['A3'] = 'Failed'
-    ws['A4'] = 'Skipped'
-    ws['A5'] = 'Passed'
+    ws['A4'] = 'Error'
+    ws['A5'] = 'Skipped'
+    ws['A6'] = 'Passed'
     ws['B2'] = len(sorted_tests)
     ws['B3'] = failed_tests
-    ws['B4'] = skipped_tests
-    ws['B5'] = passed_tests
+    ws['B4'] = error_tests
+    ws['B5'] = skipped_tests
+    ws['B6'] = passed_tests
 
     # Set DCI Job-ID
-    ws['A6'] = 'Job-Id'
-    ws['B6'] = 'https://www.distributed-ci.io/jobs/' + dci_jobid
-    ws['A7'] = ''
+    ws['A7'] = 'Job-Id'
+    ws['B7'] = 'https://www.distributed-ci.io/jobs/' + dci_jobid
     ws['A8'] = ''
+    ws['A9'] = ''
 
     # Set summary styles
     summary_fill = {
         'Summary': styles['blue_fill'],
         'Total': PatternFill(start_color='00FFFF', end_color='00FFFF', fill_type='solid'),
         'Failed': styles['red_fill'],
+        'Error': styles['dark_red_fill'],
         'Skipped': styles['orange_fill'],
         'Passed': styles['green_fill'],
         'Job-Id': styles['yellow_fill']
     }
     
-    for row in ws.iter_rows(min_row=1, max_row=7):
+    for row in ws.iter_rows(min_row=1, max_row=8):
         for cell in row:
             cell.font = styles['bold_font']
             if isinstance(cell.value, str) and cell.value in summary_fill:
@@ -334,7 +343,7 @@ def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobi
             raise ValueError("Invalid claim file: missing 'results' section")
 
         # Extract test results and process them
-        sorted_tests, total_failed, total_skipped, total_passed = extract_test_results(data)
+        sorted_tests, total_failed, total_error, total_skipped, total_passed = extract_test_results(data)
 
         # Create workbook and worksheet
         wb, ws = create_workbook_and_worksheet(output_file)
@@ -349,7 +358,7 @@ def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobi
         set_column_formatting(ws)
 
         # Add summary section
-        add_summary_section(ws, sorted_tests, total_failed, total_skipped, total_passed, dci_jobid, styles)
+        add_summary_section(ws, sorted_tests, total_failed, total_error, total_skipped, total_passed, dci_jobid, styles)
 
         # Add version information
         add_version_information(ws, data, styles)

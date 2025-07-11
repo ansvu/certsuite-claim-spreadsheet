@@ -130,7 +130,7 @@ The script expects a CertSuite claim.json file with the following structure:
     "results": {
       "test-id-1": {
         "testID": {"id": "test-name"},
-        "state": "passed|failed|skipped",
+        "state": "passed|failed|skipped|error",
         "catalogInfo": {
           "description": "Test description",
           "exceptionProcess": "Exception process",
@@ -163,6 +163,7 @@ The generated Excel file contains:
 ### Summary Section
 - Total test count
 - Failed test count (highlighted in red)
+- Error test count (highlighted in dark red)
 - Skipped test count (highlighted in orange)
 - Passed test count (highlighted in green)
 - DCI Job ID link (if applicable)
@@ -188,6 +189,7 @@ The generated Excel file contains:
 ## Color Coding
 
 - **Red**: Failed tests and failed count
+- **Dark Red**: Error tests and error count
 - **Orange**: Skipped tests and skipped count
 - **Green**: Passed tests and passed count
 - **Blue**: Headers and summary labels
@@ -273,6 +275,7 @@ For issues and questions:
 ## Changelog
 
 ### Latest Version
+- **Added error status support**: Summary now includes error test count with dark red highlighting
 - **Removed pandas dependency**: Eliminated unnecessary pandas usage, reducing dependencies and improving performance
 - **Automatic dcirc.sh reading**: Script now automatically reads DCI credentials from `dcirc.sh` file
 - **Improved DCI integration**: Better error handling and user feedback for DCI operations
