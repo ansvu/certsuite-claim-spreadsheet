@@ -39,10 +39,16 @@ def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], in
             
         for key, test in claim_results.items():
             try:
+                # Extract testID details
+                test_id_info = test.get('testID', {})
+                
+                
                 result = {
-                    'Test_Id': test.get('testID', {}).get('id', ''),
+                    'Test_Id': test_id_info.get('id', ''),
                     'Test_Text': test.get('catalogInfo', {}).get('description', ''),
                     'State': test.get('state', ''),
+                    'Suite': test_id_info.get('suite', 'unknown'),  # Add suite information
+                    'Tags': test_id_info.get('tags', ''),  # Add tags which might indicate mandatory/optional
                     'Category_Classification': ', '.join(f"{k}: {v}" for k, v in test.get('categoryClassification', {}).items()),
                     'Exception_Process': test.get('catalogInfo', {}).get('exceptionProcess', ''),
                     'Remediation': test.get('catalogInfo', {}).get('remediation', '')
@@ -367,8 +373,14 @@ def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobi
         # Apply final formatting
         apply_final_formatting(ws, styles)
 
+        # Generate suite summary and create suite summary worksheet
+        suite_summary = generate_suite_summary(sorted_tests)
+        create_suite_summary_worksheet(wb, suite_summary, sorted_tests, styles)
+
         # Save workbook to file
         wb.save(output_file)
+        
+        print(f"Generated Excel report with {len(suite_summary)} test suites")
         
     except FileNotFoundError as e:
         print(f"Error: {e}")
@@ -383,6 +395,316 @@ def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobi
         print(f"Unexpected error generating Excel report: {e}")
         sys.exit(1)
 
+def generate_suite_summary(sorted_tests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Generate test suite summary statistics."""
+    suite_stats = {}
+    
+    for test in sorted_tests:
+        # Get suite name directly from the Suite field, fallback to parsing Test_Id
+        suite = test.get('Suite', 'unknown')
+        state = test.get('State', '')
+        
+        # If suite is unknown or empty, try to extract from Test_Id
+        if not suite or suite == 'unknown':
+            test_id = test.get('Test_Id', '')
+            if test_id:
+                # Look for suite pattern in test ID
+                parts = test_id.split('-')
+                if len(parts) >= 2:
+                    # Common suite prefixes in CertSuite
+                    known_suites = [
+                        'access-control', 'affiliated-certification', 'operator', 
+                        'networking', 'platform-alteration', 'observability', 
+                        'lifecycle', 'manageability', 'performance'
+                    ]
+                    
+                    # Try to match known suites first
+                    for known_suite in known_suites:
+                        if test_id.startswith(known_suite):
+                            suite = known_suite
+                            break
+                    
+                    # If no known suite found, use first part
+                    if suite == 'unknown':
+                        suite = parts[0]
+        
+        # Initialize suite stats if not exists
+        if suite not in suite_stats:
+            suite_stats[suite] = {
+                'suite': suite,
+                'passed': 0,
+                'failed': 0,
+                'error': 0,
+                'skipped': 0,
+                'total': 0
+            }
+        
+        # Count by state
+        suite_stats[suite]['total'] += 1
+        if state == 'passed':
+            suite_stats[suite]['passed'] += 1
+        elif state == 'failed':
+            suite_stats[suite]['failed'] += 1
+        elif state == 'error':
+            suite_stats[suite]['error'] += 1
+        elif state == 'skipped':
+            suite_stats[suite]['skipped'] += 1
+    
+    # Convert to list and sort by suite name
+    suite_list = list(suite_stats.values())
+    suite_list.sort(key=lambda x: x['suite'])
+    
+    return suite_list
+
+def create_suite_summary_worksheet(wb: openpyxl.Workbook, suite_summary: List[Dict[str, Any]], 
+                                  sorted_tests: List[Dict[str, Any]], styles: Dict[str, Any]) -> None:
+    """Create a separate worksheet for test suite summary."""
+    # Create new worksheet
+    suite_ws = wb.create_sheet(title="Suite Summary")
+    
+    # Add suite summary headers
+    headers = ['SUITE', 'PASSED', 'FAILED', 'ERROR', 'SKIPPED', 'TOTAL']
+    suite_ws.append(headers)
+    
+    # Add suite data
+    for suite_data in suite_summary:
+        row = [
+            suite_data['suite'],
+            suite_data['passed'],
+            suite_data['failed'], 
+            suite_data['error'],
+            suite_data['skipped'],
+            suite_data['total']
+        ]
+        suite_ws.append(row)
+    
+    # Apply styling for suite summary table
+    apply_suite_summary_styling(suite_ws, styles)
+    
+    # Set column widths for suite summary
+    suite_ws.column_dimensions['A'].width = 30  # Suite name
+    suite_ws.column_dimensions['B'].width = 12  # Passed
+    suite_ws.column_dimensions['C'].width = 12  # Failed
+    suite_ws.column_dimensions['D'].width = 12  # Error
+    suite_ws.column_dimensions['E'].width = 12  # Skipped
+    suite_ws.column_dimensions['F'].width = 12  # Total
+    
+    # Add category classification breakdown
+    current_row = len(suite_summary) + 4  # Start after suite table + some spacing
+    
+    # Analyze category classifications
+    category_stats = analyze_category_classifications(sorted_tests)
+    
+    # Add category breakdown to worksheet
+    add_category_breakdown_to_worksheet(suite_ws, category_stats, current_row, styles)
+    
+    # Extend column widths for category section
+    suite_ws.column_dimensions['B'].width = max(suite_ws.column_dimensions['B'].width, 15)  # Total
+    suite_ws.column_dimensions['C'].width = max(suite_ws.column_dimensions['C'].width, 15)  # Mandatory
+    suite_ws.column_dimensions['D'].width = max(suite_ws.column_dimensions['D'].width, 15)  # Optional
+
+def apply_suite_summary_styling(ws: Worksheet, styles: Dict[str, Any]) -> None:
+    """Apply styling to the suite summary worksheet."""
+    # Style header row
+    for cell in ws[1]:
+        cell.font = styles['header_font']
+        cell.fill = styles['blue_fill']
+        cell.border = styles['header_border']
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Style data rows
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        for col_idx, cell in enumerate(row, start=1):
+            cell.font = styles['arial_font']
+            
+            # Apply alternating row colors for better readability
+            if row_idx % 2 == 0:
+                cell.fill = PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')
+            
+            # Center align numbers
+            if col_idx > 1:  # All columns except suite name
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            else:
+                cell.alignment = Alignment(horizontal='left', vertical='center')
+                
+            # Add borders
+            thin_border = Border(
+                left=Side(border_style='thin', color='D3D3D3'),
+                right=Side(border_style='thin', color='D3D3D3'),
+                top=Side(border_style='thin', color='D3D3D3'),
+                bottom=Side(border_style='thin', color='D3D3D3')
+            )
+            cell.border = thin_border
+
+def analyze_category_classifications(sorted_tests: List[Dict[str, Any]]) -> Dict[str, Dict[str, int]]:
+    """Analyze category classifications from test results."""
+    category_stats = {
+        'Extended': {'total': 0, 'mandatory': 0, 'optional': 0},
+        'Far-Edge': {'total': 0, 'mandatory': 0, 'optional': 0},
+        'Non-Telco': {'total': 0, 'mandatory': 0, 'optional': 0},
+        'Telco': {'total': 0, 'mandatory': 0, 'optional': 0}
+    }
+    
+
+    
+    for test in sorted_tests:
+        category_classification = test.get('Category_Classification', '')
+        test_id = test.get('Test_Id', '')
+        
+        # Parse category classification string like "Extended: Mandatory, FarEdge: Mandatory, NonTelco: Optional, Telco: Mandatory"
+        categories = {}
+        if category_classification:
+            pairs = category_classification.split(', ')
+            for pair in pairs:
+                if ': ' in pair:
+                    key, value = pair.split(': ', 1)
+                    # Store the mandatory/optional value for each category
+                    categories[key.strip()] = value.strip()
+        
+        # Process each category that has a classification
+        for category_key, mandatory_status in categories.items():
+            # Map category keys to our standard names
+            category_mapping = {
+                'Extended': 'Extended',
+                'FarEdge': 'Far-Edge', 
+                'NonTelco': 'Non-Telco',
+                'Telco': 'Telco'
+            }
+            
+            category_name = category_mapping.get(category_key, category_key)
+            
+            # Only count if this is a recognized category
+            if category_name in category_stats:
+                category_stats[category_name]['total'] += 1
+                
+                if mandatory_status.lower() == 'mandatory':
+                    category_stats[category_name]['mandatory'] += 1
+                else:  # Optional or any other value
+                    category_stats[category_name]['optional'] += 1
+    
+    return category_stats
+
+def is_test_mandatory(test: Dict[str, Any]) -> bool:
+    """Determine if a test is mandatory or optional based on test information."""
+    test_id = test.get('Test_Id', '').lower()
+    test_text = test.get('Test_Text', '').lower()
+    tags = test.get('Tags', '').lower()
+    exception_process = test.get('Exception_Process', '').lower()
+    
+    # Check tags first - this is often the most reliable indicator
+    if 'optional' in tags or 'informative' in tags or 'best-practice' in tags:
+        return False
+    if 'mandatory' in tags or 'required' in tags:
+        return True
+    
+    # Check exception process - if it mentions best practices or recommendations, likely optional
+    if any(keyword in exception_process for keyword in ['best practice', 'recommendation', 'should consider', 'informative']):
+        return False
+    
+    # Check for specific optional patterns in test ID or description
+    optional_patterns = [
+        'best-practice', 'recommended', 'informative', 'advisory',
+        'performance', 'optimization', 'enhancement', 'improvement',
+        'optional', 'non-mandatory', 'supplementary'
+    ]
+    
+    mandatory_patterns = [
+        'required', 'mandatory', 'must', 'shall', 'compliance',
+        'security', 'safety', 'critical', 'essential'
+    ]
+    
+    # Check for explicit optional indicators
+    for pattern in optional_patterns:
+        if pattern in test_id or pattern in test_text:
+            return False
+    
+    # Check for explicit mandatory indicators
+    for pattern in mandatory_patterns:
+        if pattern in test_id or pattern in test_text:
+            return True
+    
+    # Default heuristic based on common patterns:
+    # - Tests related to core functionality are usually mandatory
+    # - Tests related to performance, observability extras are often optional
+    if any(keyword in test_id for keyword in ['core', 'basic', 'fundamental', 'access-control', 'security']):
+        return True
+    
+    if any(keyword in test_id for keyword in ['performance', 'observability', 'monitoring', 'logging']):
+        # Performance and observability tests are often optional
+        return False
+    
+    # For certification suites, most tests are typically mandatory unless explicitly marked otherwise
+    # This ratio can be adjusted based on your specific certification requirements
+    return True
+
+def add_category_breakdown_to_worksheet(ws: Worksheet, category_stats: Dict[str, Dict[str, int]], 
+                                      start_row: int, styles: Dict[str, Any]) -> int:
+    """Add category breakdown section to the worksheet."""
+    current_row = start_row
+    
+    # Add category breakdown header
+    ws[f'A{current_row}'] = 'Category Classification Summary'
+    ws[f'A{current_row}'].font = styles['bold_font']
+    ws[f'A{current_row}'].fill = styles['blue_fill']
+    current_row += 1
+    
+    # Add empty row
+    current_row += 1
+    
+    # Add headers for category table
+    headers = ['Category', 'Total', 'Mandatory', 'Optional']
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=current_row, column=col_idx, value=header)
+        cell.font = styles['bold_font']
+        cell.fill = styles['yellow_fill']
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = Border(
+            left=Side(border_style='thin', color='000000'),
+            right=Side(border_style='thin', color='000000'),
+            top=Side(border_style='thin', color='000000'),
+            bottom=Side(border_style='thin', color='000000')
+        )
+    current_row += 1
+    
+    # Add category data
+    category_order = ['Extended', 'Far-Edge', 'Non-Telco', 'Telco']
+    for category in category_order:
+        if category in category_stats and category_stats[category]['total'] > 0:
+            stats = category_stats[category]
+            category_display = f"{category} specific tests only"
+            
+            row_data = [
+                category_display,
+                stats['total'],
+                stats['mandatory'],
+                stats['optional']
+            ]
+            
+            for col_idx, value in enumerate(row_data, start=1):
+                cell = ws.cell(row=current_row, column=col_idx, value=value)
+                cell.font = styles['arial_font']
+                
+                # Alignment
+                if col_idx == 1:  # Category name
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
+                else:  # Numbers
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                
+                # Border
+                cell.border = Border(
+                    left=Side(border_style='thin', color='D3D3D3'),
+                    right=Side(border_style='thin', color='D3D3D3'),
+                    top=Side(border_style='thin', color='D3D3D3'),
+                    bottom=Side(border_style='thin', color='D3D3D3')
+                )
+                
+                # Alternating row colors
+                if current_row % 2 == 0:
+                    cell.fill = PatternFill(start_color='F8F9FA', end_color='F8F9FA', fill_type='solid')
+            
+            current_row += 1
+    
+    return current_row
 
 def read_dcirc_env_variables(dcirc_path: str = "dcirc.sh") -> Dict[str, str]:
     """Read environment variables from dcirc.sh file."""

@@ -168,6 +168,42 @@ The generated Excel file contains:
 - Passed test count (highlighted in green)
 - DCI Job ID link (if applicable)
 
+### Test Suite Summary (New Worksheet)
+A separate "Suite Summary" worksheet with:
+- **SUITE**: Test suite name (access-control, networking, etc.)
+- **PASSED**: Number of passed tests per suite
+- **FAILED**: Number of failed tests per suite  
+- **ERROR**: Number of error tests per suite
+- **SKIPPED**: Number of skipped tests per suite
+- **TOTAL**: Total tests per suite
+
+**Category Classification Summary:**
+Breakdown of tests by certification category:
+- **Extended specific tests only**: Tests specific to Extended certification with Mandatory/Optional counts
+- **Far-Edge specific tests only**: Tests specific to Far-Edge certification with Mandatory/Optional counts  
+- **Non-Telco specific tests only**: Tests specific to Non-Telco certification with Mandatory/Optional counts
+- **Telco specific tests only**: Tests specific to Telco certification with Mandatory/Optional counts
+
+Example output:
+```
+-----------------------------------------------------------
+| SUITE                       PASSED    FAILED    ERROR   SKIPPED | TOTAL |
+-----------------------------------------------------------
+| access-control                   9        11        2          7 |    29 |
+| networking                       4         4        0          4 |    12 |
+-----------------------------------------------------------
+
+Category Classification Summary
+-----------------------------------------------------------
+| Category                    | Total | Mandatory | Optional |
+-----------------------------------------------------------
+| Extended specific tests only|   13  |    10     |    3     |
+| Far-Edge specific tests only|    9  |     8     |    1     |
+| Non-Telco specific tests only|  70  |    43     |   27     |
+| Telco specific tests only   |   27  |    26     |    1     |
+-----------------------------------------------------------
+```
+
 ### Version Information
 - Kubernetes version
 - OpenShift Client version
@@ -179,8 +215,8 @@ The generated Excel file contains:
 ### Test Results Table
 - **Test ID**: Unique identifier for each test
 - **Test Text**: Human-readable description
-- **State**: Test status (Failed/Skipped/Passed)
-- **Capture Output**: Test execution logs (for failed/skipped tests)
+- **State**: Test status (Failed/Error/Skipped/Passed)
+- **Capture Output**: Test execution logs (for failed/error/skipped tests)
 - **Category Classification**: Test categories (Extended, Telco, etc.)
 - **Exception Process**: Exception handling information
 - **Remediation**: Steps to fix failed tests
@@ -206,6 +242,10 @@ certsuite-claim-spreadsheet/
 ├── README.md                       # This file
 └── requirements.txt               # Python dependencies
 ```
+
+**Generated Excel file structure:**
+- **Sheet 1**: Detailed test results with summary and version info
+- **Sheet 2**: Test suite summary with pass/fail/error/skip counts per suite
 
 ## Troubleshooting
 
@@ -275,6 +315,9 @@ For issues and questions:
 ## Changelog
 
 ### Latest Version
+- **Added Category Classification Summary**: Suite Summary worksheet now includes breakdown by Extended/Far-Edge/Non-Telco/Telco with Mandatory/Optional counts
+- **Enhanced mandatory/optional detection**: Improved logic using test tags, exception processes, and sophisticated pattern matching
+- **Added Test Suite Summary**: New worksheet showing test counts by suite including error status
 - **Added error status support**: Summary now includes error test count with dark red highlighting
 - **Removed pandas dependency**: Eliminated unnecessary pandas usage, reducing dependencies and improving performance
 - **Automatic dcirc.sh reading**: Script now automatically reads DCI credentials from `dcirc.sh` file
@@ -286,3 +329,17 @@ For issues and questions:
 - Enhanced Excel formatting and styling
 - Added version information display
 - Improved offline mode support
+
+## Customizing Mandatory/Optional Classification
+
+The script uses intelligent heuristics to determine if tests are mandatory or optional:
+
+### **Detection Methods** (in order of priority):
+1. **Test Tags**: Checks for 'mandatory', 'required', 'optional', 'informative' in test tags
+2. **Exception Process**: Analyzes exception process text for keywords like "best practice", "recommendation"  
+3. **Test ID Patterns**: Looks for explicit keywords in test names
+4. **Test Description**: Analyzes test descriptions for mandatory/optional indicators
+5. **Default Classification**: Most certification tests default to mandatory unless marked otherwise
+
+### **Customization Options:**
+You can customize the mandatory/optional logic by modifying the `is_test_mandatory()` function in the script to match your specific certification requirements.
