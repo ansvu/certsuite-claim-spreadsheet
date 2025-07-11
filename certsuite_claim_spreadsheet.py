@@ -2,10 +2,8 @@ import argparse
 import json, os, sys
 import re, fileinput
 import subprocess
-import pandas as pd
 import openpyxl
 from openpyxl.utils import get_column_letter
-from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.worksheet.worksheet import Worksheet
 from typing import Dict, List, Any, Tuple
@@ -100,12 +98,20 @@ def create_workbook_and_worksheet(output_file: str) -> Tuple[openpyxl.Workbook, 
 
 def add_test_results_to_worksheet(ws: Worksheet, sorted_tests: List[Dict[str, Any]]) -> None:
     """Add test results to the worksheet."""
-    # Convert list of dictionaries to a dataframe
-    df = pd.DataFrame(sorted_tests, columns=['Test_Id', 'Test_Text', 'State', 'Capture_Output', 'Category_Classification','Exception_Process','Remediation','Best_Practice_Link'])
-
+    # Define column headers
+    headers = ['Test_Id', 'Test_Text', 'State', 'Capture_Output', 'Category_Classification', 'Exception_Process', 'Remediation', 'Best_Practice_Link']
+    
+    # Add headers to worksheet
+    ws.append(headers)
+    
     # Add test results to worksheet
-    for row in dataframe_to_rows(df, index=False, header=True):
-        ws.append(row)
+    for test in sorted_tests:
+        row_data = []
+        for header in headers:
+            # Get value from test dictionary, use empty string if key doesn't exist
+            value = test.get(header, '')
+            row_data.append(value)
+        ws.append(row_data)
 
 def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
     """Apply basic styling to the worksheet and return style objects."""

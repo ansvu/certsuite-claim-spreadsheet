@@ -26,8 +26,10 @@ This script processes CertSuite test results from JSON claim files and generates
 ### Required Python Packages
 
 ```bash
-pip install pandas openpyxl argparse
+pip install openpyxl
 ```
+
+*Note: `argparse` is included in Python's standard library, so no separate installation is needed.*
 
 ### Optional: DCI Integration
 
@@ -271,6 +273,7 @@ For issues and questions:
 ## Changelog
 
 ### Latest Version
+- **Removed pandas dependency**: Eliminated unnecessary pandas usage, reducing dependencies and improving performance
 - **Automatic dcirc.sh reading**: Script now automatically reads DCI credentials from `dcirc.sh` file
 - **Improved DCI integration**: Better error handling and user feedback for DCI operations
 - **Enhanced credential management**: Supports both environment variables and configuration file
