@@ -149,6 +149,7 @@ def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
                 cell.font = header_font
                 cell.fill = blue_fill
                 cell.border = header_border
+                cell.alignment = Alignment(horizontal='center', vertical='center')
             elif cell.column == 3:
                 if cell.value == 'failed':
                     cell.fill = red_fill
@@ -190,10 +191,14 @@ def set_column_formatting(ws: Worksheet) -> None:
             ws.column_dimensions[column_letter].width = adjusted_width
             if column[0].column == 3:
                 for cell in column:
-                    cell.alignment = Alignment(horizontal='center')
+                    # Skip header row (row 1) - preserve its center alignment
+                    if cell.row != 1:
+                        cell.alignment = Alignment(horizontal='center')
             else:
                 for cell in column:
-                    cell.alignment = Alignment(wrapText=True)
+                    # Skip header row (row 1) - preserve its center alignment
+                    if cell.row != 1:
+                        cell.alignment = Alignment(wrapText=True, horizontal='left', vertical='top')
 
 def add_summary_section(ws: Worksheet, sorted_tests: List[Dict[str, Any]], 
                        failed_tests: int, error_tests: int, skipped_tests: int, passed_tests: int, 
@@ -272,7 +277,7 @@ def add_version_information(ws: Worksheet, data: Dict[str, Any],
 def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
     """Apply final formatting and styling to the worksheet."""
     # Center alignment for specific rows
-    rows_to_center = [1, 9]
+    rows_to_center = [1, 10]
     for row_number in rows_to_center:
         for cell in ws[row_number]:
             cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=False)
@@ -295,8 +300,8 @@ def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
         if i in [1, 2, 3, 4, 5, 6]:
            cell.border = border
 
-    # Set border to State Column C
-    for i in range(10, ws.max_row + 1):
+    # Set border to State Column C, for data rows only to not affect header
+    for i in range(11, ws.max_row + 1):
         cell = ws[f'C{i}']
         cell.border = border
 
@@ -304,12 +309,10 @@ def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
     ws['C1'].fill = styles['light_green_fill']
     ws['D1'].fill = styles['light_green_fill']
 
-    # Set alignment for specific cells
-    for cell in ws['B'][ws.min_row-1:ws.max_row-6]:
-        cell.alignment = Alignment(horizontal='left', vertical='center')
-
-    for cell in ws['D'][ws.min_row-2:ws.max_row-5]:
-        cell.alignment = Alignment(horizontal='left', vertical='center')
+    # Set alignment for summary value cells in columns B and D
+    for i in range(1, 7):  # This will affect B2-B7 and D2-D7
+        ws[f'B{i+1}'].alignment = Alignment(horizontal='left', vertical='center')
+        ws[f'D{i+1}'].alignment = Alignment(horizontal='left', vertical='center')
 
     # Set column widths
     ws.column_dimensions['B'].width = 100
