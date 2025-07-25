@@ -54,6 +54,12 @@ def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], in
                     'Remediation': test.get('catalogInfo', {}).get('remediation', '')
                 }
                 
+                # Add checkDetails for failed tests only
+                if test.get('state') == 'failed':
+                    check_details = format_check_details(test.get('checkDetails', ''))
+                    if check_details:
+                        result['Check_Details'] = check_details
+                
                 # Filter out lines containing "INFO" from capturedTestOutput
                 captured_output = test.get('capturedTestOutput', '')
                 if captured_output:
@@ -93,22 +99,87 @@ def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], in
     except Exception as e:
         raise ValueError(f"Error extracting test results: {e}")
 
-def create_workbook_and_worksheet(output_file: str) -> Tuple[openpyxl.Workbook, Worksheet]:
-    """Create Excel workbook and worksheet with proper naming."""
+def format_check_details(check_details_str: str) -> str:
+    """Format checkDetails JSON string into readable text for Excel."""
+    if not check_details_str or check_details_str.strip() == '':
+        return ''
+    
+    try:
+        # Parse the JSON string
+        check_details = json.loads(check_details_str)
+        
+        compliant_objects = check_details.get('CompliantObjectsOut', []) or []
+        non_compliant_objects = check_details.get('NonCompliantObjectsOut', []) or []
+        
+        formatted_lines = []
+        
+        # Process non-compliant objects first (most important for failures)
+        if non_compliant_objects:
+            formatted_lines.append("NON-COMPLIANT OBJECTS:")
+            for obj in non_compliant_objects:
+                obj_type = obj.get('ObjectType', 'Unknown')
+                keys = obj.get('ObjectFieldsKeys', [])
+                values = obj.get('ObjectFieldsValues', [])
+                
+                # Create a formatted entry for this object
+                obj_info = [f"Type: {obj_type}"]
+                
+                # Add key-value pairs, limiting to most important ones
+                for i, (key, value) in enumerate(zip(keys, values)):
+                    if i >= 5:  # Limit to first 5 fields to avoid overwhelming output
+                        break
+                    if key and value:
+                        obj_info.append(f"{key}: {value}")
+                
+                formatted_lines.append("  • " + " | ".join(obj_info))
+        
+        # Process compliant objects (summary only to save space)
+        if compliant_objects:
+            # Group by object type for summary
+            compliant_summary = {}
+            for obj in compliant_objects:
+                obj_type = obj.get('ObjectType', 'Unknown')
+                if obj_type not in compliant_summary:
+                    compliant_summary[obj_type] = 0
+                compliant_summary[obj_type] += 1
+            
+            if compliant_summary:
+                summary_parts = [f"{count} {obj_type}(s)" for obj_type, count in compliant_summary.items()]
+                formatted_lines.append(f"COMPLIANT: {', '.join(summary_parts)}")
+        
+        return '\n'.join(formatted_lines)
+        
+    except json.JSONDecodeError:
+        return f"Error parsing checkDetails: {check_details_str[:100]}..."
+    except Exception as e:
+        return f"Error formatting checkDetails: {str(e)}"
+
+def create_workbook_and_worksheet(output_file: str, input_file: str) -> Tuple[openpyxl.Workbook, Worksheet]:
+    """Create Excel workbook and worksheet with proper naming based on input filename."""
     wb = openpyxl.Workbook()
     ws = wb.active
     if ws is None:
         ws = wb.create_sheet()
     
-    sheetname = os.path.basename(output_file)
+    # Extract filename without path and .json extension for sheet name
+    input_basename = os.path.basename(input_file)
+    if input_basename.endswith('.json'):
+        sheetname = input_basename[:-5]  # Remove .json extension
+    else:
+        sheetname = input_basename
+    
+    # Ensure sheet name is valid (Excel limits sheet names to 31 characters)
+    if len(sheetname) > 31:
+        sheetname = sheetname[:31]
+    
     ws.title = sheetname.strip()
     
     return wb, ws
 
 def add_test_results_to_worksheet(ws: Worksheet, sorted_tests: List[Dict[str, Any]]) -> None:
     """Add test results to the worksheet."""
-    # Define column headers
-    headers = ['Test_Id', 'Test_Text', 'State', 'Capture_Output', 'Category_Classification', 'Exception_Process', 'Remediation', 'Best_Practice_Link']
+    # Define column headers - add Check_Details after State
+    headers = ['Test_Id', 'Test_Text', 'State', 'Check_Details', 'Capture_Output', 'Category_Classification', 'Exception_Process', 'Remediation', 'Best_Practice_Link']
     
     # Add headers to worksheet
     ws.append(headers)
@@ -122,6 +193,36 @@ def add_test_results_to_worksheet(ws: Worksheet, sorted_tests: List[Dict[str, An
             row_data.append(value)
         ws.append(row_data)
 
+def style_header_row(ws: Worksheet, header_row_num: int, styles: Dict[str, Any]) -> None:
+    """Style the header row with blue background and white text."""
+    for col in range(1, 10):  # Columns A through I
+        cell = ws.cell(row=header_row_num, column=col)
+        cell.font = styles['header_font']
+        cell.fill = styles['blue_fill']
+        cell.border = styles['header_border']
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+def style_data_cells(ws: Worksheet, styles: Dict[str, Any]) -> None:
+    """Style data cells, particularly the State column and Check_Details column."""
+    # Style data rows (starting from row 12)
+    for row_num in range(12, ws.max_row + 1):
+        # State column is column C (3rd column)
+        state_cell = ws.cell(row=row_num, column=3)  # Column C = State
+        if state_cell.value:
+            if state_cell.value == 'failed':
+                state_cell.fill = styles['red_fill']
+            elif state_cell.value == 'error':
+                state_cell.fill = styles['dark_red_fill']
+            elif state_cell.value == 'skipped':
+                state_cell.fill = styles['orange_fill']
+            elif state_cell.value == 'passed':
+                state_cell.fill = styles['green_fill']
+        
+        # Check_Details column is column D (4th column) - light gray background for readability
+        check_details_cell = ws.cell(row=row_num, column=4)  # Column D = Check_Details
+        if check_details_cell.value and str(check_details_cell.value).strip():
+            check_details_cell.fill = styles['light_gray_fill']
+
 def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
     """Apply basic styling to the worksheet and return style objects."""
     # Define font and fill styles
@@ -129,28 +230,32 @@ def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
     red_fill = PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid')
     dark_red_fill = PatternFill(start_color='8B0000', end_color='8B0000', fill_type='solid')  # Dark red for errors
     orange_fill = PatternFill(start_color='FFE599', end_color='FFE599', fill_type='solid')
-    blue_fill = PatternFill(start_color='AED6F1', end_color='AED6F1', fill_type='solid')
+    blue_fill = PatternFill(start_color='1E3F76', end_color='1E3F76', fill_type='solid')  # Dark blue for title and headers
+    light_blue_fill = PatternFill(start_color='AED6F1', end_color='AED6F1', fill_type='solid')  # Light blue for summary
     green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
     yellow_fill = PatternFill(start_color='FFFFCC', end_color='FFFFCC', fill_type='solid')
     light_green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
+    light_gray_fill = PatternFill(start_color='F5F5F5', end_color='F5F5F5', fill_type='solid')
 
     arial_font = Font(name='Arial')
-    header_font = Font(bold=True)
-    header_border = Border(left=Side(border_style='medium', color='000000'),
-                    right=Side(border_style='medium', color='000000'),
-                    top=Side(border_style='medium', color='000000'),
-                    bottom=Side(border_style='medium', color='000000'))
+    header_font = Font(bold=True, color='FFFFFF')  # White text for contrast on dark blue
+    header_border = Border(
+        left=Side(border_style='medium', color='000000'),
+        right=Side(border_style='medium', color='000000'),
+        top=Side(border_style='medium', color='000000'),
+        bottom=Side(border_style='medium', color='000000')
+    )
 
     # Set cell styles based on test state
     for row in ws.iter_rows(min_row=1):
         for cell in row:
             cell.font = arial_font
-            if cell.row == 1:
+            if cell.row == 11:  # Header row is now at row 11 (after title and summary)
                 cell.font = header_font
                 cell.fill = blue_fill
                 cell.border = header_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
-            elif cell.column == 3:
+            elif cell.column == 3:  # State column
                 if cell.value == 'failed':
                     cell.fill = red_fill
                 elif cell.value == 'error':
@@ -159,6 +264,9 @@ def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
                     cell.fill = orange_fill
                 elif cell.value == 'passed':
                     cell.fill = green_fill
+            elif cell.column == 4:  # Check_Details column - light gray background for readability
+                if cell.value and cell.value.strip():
+                    cell.fill = light_gray_fill
     
     return {
         'bold_font': bold_font,
@@ -166,9 +274,11 @@ def apply_basic_styling(ws: Worksheet) -> Dict[str, Any]:
         'dark_red_fill': dark_red_fill,
         'orange_fill': orange_fill,
         'blue_fill': blue_fill,
+        'light_blue_fill': light_blue_fill,
         'green_fill': green_fill,
         'yellow_fill': yellow_fill,
         'light_green_fill': light_green_fill,
+        'light_gray_fill': light_gray_fill,
         'arial_font': arial_font,
         'header_font': header_font,
         'header_border': header_border
@@ -189,44 +299,78 @@ def set_column_formatting(ws: Worksheet) -> None:
                     pass
             adjusted_width = (max_length + 2)
             ws.column_dimensions[column_letter].width = adjusted_width
-            if column[0].column == 3:
+            
+            if column[0].column == 3:  # State column
                 for cell in column:
                     # Skip header row (row 1) - preserve its center alignment
                     if cell.row != 1:
                         cell.alignment = Alignment(horizontal='center')
+            elif column[0].column == 4:  # Check_Details column
+                # Set a reasonable max width for Check_Details to prevent extremely wide columns
+                ws.column_dimensions[column_letter].width = min(adjusted_width, 80)
+                for cell in column:
+                    # Skip header row (row 1) - preserve its center alignment
+                    if cell.row != 1:
+                        cell.alignment = Alignment(wrapText=True, horizontal='left', vertical='top')
             else:
                 for cell in column:
                     # Skip header row (row 1) - preserve its center alignment
                     if cell.row != 1:
                         cell.alignment = Alignment(wrapText=True, horizontal='left', vertical='top')
 
+def add_title_row(ws: Worksheet, title: str, styles: Dict[str, Any]) -> None:
+    """Add a title row at the top with header color styling."""
+    # Insert one row at the top for title
+    ws.insert_rows(1, amount=1)
+    
+    # Set the title in B1 (not merged)
+    ws['B1'] = title
+    
+    # Apply header styling to B1 only
+    title_font = Font(bold=True, name='Arial', size=14, color='FFFFFF')  # White text
+    title_fill = styles['blue_fill']  # Dark blue from styles
+    title_border = Border(
+        left=Side(border_style='medium', color='000000'),
+        right=Side(border_style='medium', color='000000'),
+        top=Side(border_style='medium', color='000000'),
+        bottom=Side(border_style='medium', color='000000')
+    )
+    title_alignment = Alignment(horizontal='left', vertical='center')
+    
+    # Apply styling to B1 only
+    title_cell = ws['B1']
+    title_cell.font = title_font
+    title_cell.fill = title_fill
+    title_cell.alignment = title_alignment
+    title_cell.border = title_border
+
 def add_summary_section(ws: Worksheet, sorted_tests: List[Dict[str, Any]], 
                        failed_tests: int, error_tests: int, skipped_tests: int, passed_tests: int, 
                        dci_jobid: str, styles: Dict[str, Any]) -> None:
     """Add summary section at the top of the worksheet."""
-    # Add summary section
-    ws.insert_rows(1, amount=9)  # Insert 9 empty rows at the top (one more for error)
-    ws['A1'] = 'Summary'
-    ws['A2'] = 'Total'
-    ws['A3'] = 'Failed'
-    ws['A4'] = 'Error'
-    ws['A5'] = 'Skipped'
-    ws['A6'] = 'Passed'
-    ws['B2'] = len(sorted_tests)
-    ws['B3'] = failed_tests
-    ws['B4'] = error_tests
-    ws['B5'] = skipped_tests
-    ws['B6'] = passed_tests
+    # Add summary section (now starts at row 2 due to title row)
+    ws.insert_rows(2, amount=9)  # Insert 9 empty rows starting at row 2
+    ws['A2'] = 'Summary'
+    ws['A3'] = 'Total'
+    ws['A4'] = 'Failed'
+    ws['A5'] = 'Error'
+    ws['A6'] = 'Skipped'
+    ws['A7'] = 'Passed'
+    ws['B3'] = len(sorted_tests)
+    ws['B4'] = failed_tests
+    ws['B5'] = error_tests
+    ws['B6'] = skipped_tests
+    ws['B7'] = passed_tests
 
     # Set DCI Job-ID
-    ws['A7'] = 'Job-Id'
-    ws['B7'] = 'https://www.distributed-ci.io/jobs/' + dci_jobid
-    ws['A8'] = ''
+    ws['A8'] = 'Job-Id'
+    ws['B8'] = 'https://www.distributed-ci.io/jobs/' + dci_jobid
     ws['A9'] = ''
+    ws['A10'] = ''
 
     # Set summary styles
     summary_fill = {
-        'Summary': styles['blue_fill'],
+        'Summary': styles['light_blue_fill'],  # Use light blue for summary section
         'Total': PatternFill(start_color='00FFFF', end_color='00FFFF', fill_type='solid'),
         'Failed': styles['red_fill'],
         'Error': styles['dark_red_fill'],
@@ -235,7 +379,7 @@ def add_summary_section(ws: Worksheet, sorted_tests: List[Dict[str, Any]],
         'Job-Id': styles['yellow_fill']
     }
     
-    for row in ws.iter_rows(min_row=1, max_row=8):
+    for row in ws.iter_rows(min_row=2, max_row=9):
         for cell in row:
             cell.font = styles['bold_font']
             if isinstance(cell.value, str) and cell.value in summary_fill:
@@ -255,29 +399,29 @@ def add_version_information(ws: Worksheet, data: Dict[str, Any],
         claim_format = versions.get('claimFormat', 'N/A')
         cert_git_commit = versions.get('certSuiteGitCommit', 'N/A')
 
-        ws['C1'] = 'Component'
-        ws['D1'] = 'Version'
-        ws['C2'] = 'K8S'
-        ws['C3'] = 'ocClient'
-        ws['C4'] = 'OCP'
-        ws['C5'] = 'CERTSUIT'
-        ws['C6'] = 'claimF'
-        ws['C7'] = 'certGitCom'
+        ws['C2'] = 'Component'
+        ws['D2'] = 'Version'
+        ws['C3'] = 'K8S'
+        ws['C4'] = 'ocClient'
+        ws['C5'] = 'OCP'
+        ws['C6'] = 'CERTSUIT'
+        ws['C7'] = 'claimF'
+        ws['C8'] = 'certGitCom'
 
-        ws['D2'] = k8s_value
-        ws['D3'] = oc_client_value
-        ws['D4'] = ocp_value
-        ws['D5'] = cert_value
-        ws['D6'] = claim_format
-        ws['D7'] = cert_git_commit
+        ws['D3'] = k8s_value
+        ws['D4'] = oc_client_value
+        ws['D5'] = ocp_value
+        ws['D6'] = cert_value
+        ws['D7'] = claim_format
+        ws['D8'] = cert_git_commit
     except Exception as e:
         print(f"Warning: Error adding version information: {e}")
         # Continue with empty values if version info is not available
 
 def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
     """Apply final formatting and styling to the worksheet."""
-    # Center alignment for specific rows
-    rows_to_center = [1, 10]
+    # Center alignment for specific rows (title and header)
+    rows_to_center = [1, 11]  # Title row and data header row (shifted by 1)
     for row_number in rows_to_center:
         for cell in ws[row_number]:
             cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=False)
@@ -290,50 +434,82 @@ def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
         bottom=Side(border_style='thin', color='D3D3D3')
     )
 
-    # Set version styles for version info section
-    for i, cell in enumerate(ws['C']):
-        if i in [1, 2, 3, 4, 5, 6]:
-           cell.border = border
-           cell.fill = styles['yellow_fill']
+    # Set version styles for version info section (rows 2-8, columns C-D)
+    for i in range(2, 9):  # Rows 2-8 (shifted by 1)
+        ws[f'C{i}'].border = border
+        ws[f'C{i}'].fill = styles['yellow_fill']
+        ws[f'D{i}'].border = border
 
-    for i, cell in enumerate(ws['A']):
-        if i in [1, 2, 3, 4, 5, 6]:
-           cell.border = border
+    # Set borders for summary section (rows 2-9)
+    for i in range(2, 10):  # Summary rows 2-9 (shifted by 1)
+        ws[f'A{i}'].border = border
 
-    # Set border to State Column C, for data rows only to not affect header
-    for i in range(11, ws.max_row + 1):
+    # Set border to State Column (C), for data rows only (starting from row 12)
+    for i in range(12, ws.max_row + 1):  # Data starts at row 12 (shifted by 1)
         cell = ws[f'C{i}']
         cell.border = border
+        
+    # Set border to Check_Details Column (D), for data rows only
+    for i in range(12, ws.max_row + 1):  # Data starts at row 12 (shifted by 1)
+        cell = ws[f'D{i}']
+        cell.border = border
 
-    # Directly set the fill for the first cell in columns 'C' and 'D'
-    ws['C1'].fill = styles['light_green_fill']
-    ws['D1'].fill = styles['light_green_fill']
+    # Set the fill for version info headers
+    ws['C2'].fill = styles['light_green_fill']  # Shifted from C1 to C2
+    ws['D2'].fill = styles['light_green_fill']  # Shifted from D1 to D2
 
     # Set alignment for summary value cells in columns B and D
-    for i in range(1, 7):  # This will affect B2-B7 and D2-D7
+    for i in range(2, 8):  # This will affect B3-B8 and D3-D8 (shifted by 1)
         ws[f'B{i+1}'].alignment = Alignment(horizontal='left', vertical='center')
         ws[f'D{i+1}'].alignment = Alignment(horizontal='left', vertical='center')
 
-    # Set column widths
+    # Set column widths - adjust for new column layout
     ws.column_dimensions['B'].width = 100
-    ws.column_dimensions['D'].width = 100
-    ws.column_dimensions['F'].width = 100
-    ws.column_dimensions['G'].width = 100
-    ws.column_dimensions['H'].width = 100
-    ws.column_dimensions['C'].width = 11
+    ws.column_dimensions['D'].width = 100  # Check_Details column
+    ws.column_dimensions['E'].width = 80   # Capture_Output (was column D, now E)
+    ws.column_dimensions['F'].width = 100  # Category_Classification (was column E, now F)
+    ws.column_dimensions['G'].width = 100  # Exception_Process (was column F, now G)
+    ws.column_dimensions['H'].width = 100  # Remediation (was column G, now H)
+    ws.column_dimensions['I'].width = 100  # Best_Practice_Link (was column H, now I)
+    ws.column_dimensions['C'].width = 11   # State column
 
-    # Set special font for Category Classification
+    # Set special font for Category Classification (now column F)
     blue_bold_font = Font(name='Arial', bold=False, color="0000FF")
     keywords = ["Extended:", "FarEdge:", "NonTelco:", "Telco:"]
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=6):
+    for row in ws.iter_rows(min_row=12, max_row=ws.max_row, min_col=1, max_col=7):  # Data starts at row 12
         for cell in row:
             # Check if the cell contains any of the specified strings
             if isinstance(cell.value, str) and any(keyword in cell.value for keyword in keywords):
                 cell.font = blue_bold_font
 
-    # Set row heights
-    for row_num in range(10, 200): 
+    # Set row heights for data rows
+    for row_num in range(12, 200):  # Data rows start at 12 (shifted by 1)
         ws.row_dimensions[row_num].height = 30
+
+    # Add auto-filter and freeze panes
+    add_functional_features(ws)
+
+def add_functional_features(ws: Worksheet) -> None:
+    """Add freeze panes, auto-filter, and other functional features."""
+    # Freeze panes - freeze only rows 1-11 (title + summary section + header row)
+    # Title is at row 1, summary at rows 2-10, headers at row 11, data starts at row 12
+    # This keeps the title, summary section and headers visible when scrolling down
+    # but allows all columns to scroll freely when moving horizontally
+    ws.freeze_panes = 'A12'  # Freeze above row 12 only (no column freezing)
+    
+    # Add auto-filter to header row for easy filtering
+    if ws.max_row > 11:  # Only add if we have data rows (header is now at row 11)
+        ws.auto_filter.ref = f"A11:{get_column_letter(ws.max_column)}{ws.max_row}"
+    
+    # Set print settings for better printing
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0  # Allow multiple pages vertically
+    
+    # Set print area (include title and summary sections)
+    if ws.max_row > 11:
+        ws.print_area = f'A1:{get_column_letter(ws.max_column)}{ws.max_row}'
 
 def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobid: str):
     """Generate Excel report from CertSuite claim JSON file."""
@@ -356,22 +532,51 @@ def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobi
         sorted_tests, total_failed, total_error, total_skipped, total_passed = extract_test_results(data)
 
         # Create workbook and worksheet
-        wb, ws = create_workbook_and_worksheet(output_file)
+        wb, ws = create_workbook_and_worksheet(output_file, input_claim)
+
+        # Create styles first
+        styles = {
+            'bold_font': Font(bold=True),
+            'red_fill': PatternFill(start_color='FF0000', end_color='FF0000', fill_type='solid'),
+            'dark_red_fill': PatternFill(start_color='8B0000', end_color='8B0000', fill_type='solid'),
+            'orange_fill': PatternFill(start_color='FFE599', end_color='FFE599', fill_type='solid'),
+            'blue_fill': PatternFill(start_color='1E3F76', end_color='1E3F76', fill_type='solid'),  # Dark blue for title and headers
+            'light_blue_fill': PatternFill(start_color='AED6F1', end_color='AED6F1', fill_type='solid'),  # Light blue for summary
+            'green_fill': PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid'),
+            'yellow_fill': PatternFill(start_color='FFFFCC', end_color='FFFFCC', fill_type='solid'),
+            'light_green_fill': PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid'),
+            'light_gray_fill': PatternFill(start_color='F5F5F5', end_color='F5F5F5', fill_type='solid'),
+            'arial_font': Font(name='Arial'),
+            'header_font': Font(bold=True, color='FFFFFF'),  # White text for contrast on dark blue
+            'header_border': Border(
+                left=Side(border_style='medium', color='000000'),
+                right=Side(border_style='medium', color='000000'),
+                top=Side(border_style='medium', color='000000'),
+                bottom=Side(border_style='medium', color='000000')
+            )
+        }
 
         # Add test results to worksheet
         add_test_results_to_worksheet(ws, sorted_tests)
 
-        # Apply basic styling
-        styles = apply_basic_styling(ws)
-
-        # Set column formatting
-        set_column_formatting(ws)
+        # Add title row (using sheet name as title)
+        title = f"CertSuite Test Results - {ws.title}"
+        add_title_row(ws, title, styles)
 
         # Add summary section
         add_summary_section(ws, sorted_tests, total_failed, total_error, total_skipped, total_passed, dci_jobid, styles)
 
         # Add version information
         add_version_information(ws, data, styles)
+
+        # Style the header row (should be at row 11: title=1, summary=2-10, headers=11)
+        style_header_row(ws, 11, styles)
+
+        # Style data cells for state colors
+        style_data_cells(ws, styles)
+
+        # Set column formatting
+        set_column_formatting(ws)
 
         # Apply final formatting
         apply_final_formatting(ws, styles)
