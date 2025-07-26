@@ -8,6 +8,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.worksheet.worksheet import Worksheet
 from typing import Dict, List, Any, Tuple
+from openpyxl.cell.text import InlineFont
+from openpyxl.cell.rich_text import TextBlock, CellRichText
 
 def trim_empty_lines(text: str) -> str:
     """Remove empty lines from text."""
@@ -399,7 +401,7 @@ def add_version_information(ws: Worksheet, data: Dict[str, Any],
         claim_format = versions.get('claimFormat', 'N/A')
         cert_git_commit = versions.get('certSuiteGitCommit', 'N/A')
 
-        ws['C2'] = 'Component'
+        ws['C2'] = 'Components'
         ws['D2'] = 'Version'
         ws['C3'] = 'K8S'
         ws['C4'] = 'ocClient'
@@ -463,24 +465,67 @@ def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
         ws[f'B{i+1}'].alignment = Alignment(horizontal='left', vertical='center')
         ws[f'D{i+1}'].alignment = Alignment(horizontal='left', vertical='center')
 
+    # Set specific alignments as requested
+    # D2 - center alignment
+    ws['D2'].alignment = Alignment(horizontal='center', vertical='center')
+    ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
+
+    # C3 to C8 - left alignment  
+    for i in range(3, 9):  # C3 to C8
+        ws[f'C{i}'].alignment = Alignment(horizontal='left', vertical='center')
+
     # Set column widths - adjust for new column layout
     ws.column_dimensions['B'].width = 100
     ws.column_dimensions['D'].width = 100  # Check_Details column
     ws.column_dimensions['E'].width = 80   # Capture_Output (was column D, now E)
-    ws.column_dimensions['F'].width = 100  # Category_Classification (was column E, now F)
+    ws.column_dimensions['F'].width = 77   # Category_Classification (was column E, now F)
     ws.column_dimensions['G'].width = 100  # Exception_Process (was column F, now G)
     ws.column_dimensions['H'].width = 100  # Remediation (was column G, now H)
     ws.column_dimensions['I'].width = 100  # Best_Practice_Link (was column H, now I)
-    ws.column_dimensions['C'].width = 11   # State column
+    ws.column_dimensions['C'].width = 12   # State column
 
     # Set special font for Category Classification (now column F)
-    blue_bold_font = Font(name='Arial', bold=False, color="0000FF")
-    keywords = ["Extended:", "FarEdge:", "NonTelco:", "Telco:"]
-    for row in ws.iter_rows(min_row=12, max_row=ws.max_row, min_col=1, max_col=7):  # Data starts at row 12
+    # Define fonts for different parts of the text  
+    category_font = InlineFont(b=True, color='0000FF')    # Bold blue for category names
+    mandatory_font = InlineFont(color='006400')           # Dark green for Mandatory
+    optional_font = InlineFont(color='FF8C00')            # Orange for Optional
+    
+    for row in ws.iter_rows(min_row=12, max_row=ws.max_row, min_col=1, max_col=9):  # Data starts at row 12
         for cell in row:
-            # Check if the cell contains any of the specified strings
-            if isinstance(cell.value, str) and any(keyword in cell.value for keyword in keywords):
-                cell.font = blue_bold_font
+            # Check if this is the Category_Classification column (column F)
+            if cell.column == 6 and cell.value:  # Column F = Category_Classification
+                cell_value = str(cell.value)
+                
+                # Create rich text with different colors for different parts
+                rich_text_parts = []
+                
+                # Split by comma to handle multiple classifications
+                parts = cell_value.split(', ')
+                
+                for i, part in enumerate(parts):
+                    if ':' in part:
+                        category, classification = part.split(':', 1)
+                        classification = classification.strip()
+                        
+                        # Add category name in blue
+                        rich_text_parts.append(TextBlock(category_font, category + ':'))
+                        rich_text_parts.append(TextBlock(category_font, ' '))
+                        
+                        # Add classification in appropriate color
+                        if 'Mandatory' in classification:
+                            rich_text_parts.append(TextBlock(mandatory_font, classification))
+                        elif 'Optional' in classification:
+                            rich_text_parts.append(TextBlock(optional_font, classification))
+                        else:
+                            rich_text_parts.append(TextBlock(category_font, classification))
+                        
+                        # Add comma separator if not the last part
+                        if i < len(parts) - 1:
+                            rich_text_parts.append(TextBlock(category_font, ', '))
+                
+                # Apply rich text to cell
+                if rich_text_parts:
+                    cell.value = CellRichText(rich_text_parts)
 
     # Set row heights for data rows
     for row_num in range(12, 200):  # Data rows start at 12 (shifted by 1)
