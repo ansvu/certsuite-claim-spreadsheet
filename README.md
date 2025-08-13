@@ -19,7 +19,6 @@ This script processes CertSuite test results from JSON claim files and generates
 - **Version Tracking**: Component version information from the claim file
 - **DCI Integration**: Can automatically download claim files from DCI (Distributed CI) servers
 - **Offline Mode**: Works with local claim.json files without DCI connectivity
-- **Error Handling**: Robust error handling for malformed JSON and missing data
 
 ## Prerequisites
 
@@ -118,42 +117,6 @@ python certsuite_claim_spreadsheet.py -i claim.json -j 12345 -o dci_report.xlsx
 **Example 3: Custom Output Location**
 ```bash
 python certsuite_claim_spreadsheet.py -i claim.json -o /reports/monthly_certsuite_$(date +%Y-%m).xlsx
-```
-
-## Input Format
-
-The script expects a CertSuite claim.json file with the following structure:
-
-```json
-{
-  "claim": {
-    "results": {
-      "test-id-1": {
-        "testID": {"id": "test-name"},
-        "state": "passed|failed|skipped|error",
-        "catalogInfo": {
-          "description": "Test description",
-          "exceptionProcess": "Exception process",
-          "remediation": "Remediation steps",
-          "bestPracticeReference": "Best practice link"
-        },
-        "capturedTestOutput": "Test output logs",
-        "categoryClassification": {
-          "Extended": "true",
-          "Telco": "false"
-        }
-      }
-    },
-    "versions": {
-      "k8s": "v1.28.0",
-      "ocClient": "4.14.0",
-      "ocp": "4.14.0",
-      "certSuite": "v5.0.0",
-      "claimFormat": "0.4.0",
-      "certSuiteGitCommit": "abc123"
-    }
-  }
-}
 ```
 
 ## Output Format
@@ -304,42 +267,3 @@ For debugging, you can add print statements or use Python's logging module. The 
 ## License
 
 This project is licensed under the terms specified in the LICENSE file.
-
-## Support
-
-For issues and questions:
-1. Check the troubleshooting section above
-2. Review the command-line help: `python certsuite_claim_spreadsheet.py --help`
-3. Open an issue in the repository
-
-## Changelog
-
-### Latest Version
-- **Added Category Classification Summary**: Suite Summary worksheet now includes breakdown by Extended/Far-Edge/Non-Telco/Telco with Mandatory/Optional counts
-- **Enhanced mandatory/optional detection**: Improved logic using test tags, exception processes, and sophisticated pattern matching
-- **Added Test Suite Summary**: New worksheet showing test counts by suite including error status
-- **Added error status support**: Summary now includes error test count with dark red highlighting
-- **Removed pandas dependency**: Eliminated unnecessary pandas usage, reducing dependencies and improving performance
-- **Automatic dcirc.sh reading**: Script now automatically reads DCI credentials from `dcirc.sh` file
-- **Improved DCI integration**: Better error handling and user feedback for DCI operations
-- **Enhanced credential management**: Supports both environment variables and configuration file
-- Refactored code into modular functions
-- Added comprehensive error handling
-- Improved type safety with type hints
-- Enhanced Excel formatting and styling
-- Added version information display
-- Improved offline mode support
-
-## Customizing Mandatory/Optional Classification
-
-The script uses intelligent heuristics to determine if tests are mandatory or optional:
-
-### **Detection Methods** (in order of priority):
-1. **Test Tags**: Checks for 'mandatory', 'required', 'optional', 'informative' in test tags
-2. **Exception Process**: Analyzes exception process text for keywords like "best practice", "recommendation"  
-3. **Test ID Patterns**: Looks for explicit keywords in test names
-4. **Test Description**: Analyzes test descriptions for mandatory/optional indicators
-5. **Default Classification**: Most certification tests default to mandatory unless marked otherwise
-
-### **Customization Options:**
-You can customize the mandatory/optional logic by modifying the `is_test_mandatory()` function in the script to match your specific certification requirements.
