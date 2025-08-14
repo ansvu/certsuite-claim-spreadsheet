@@ -132,17 +132,25 @@ def extract_test_results(data: Dict[str, Any], impact_statements: Dict[str, str]
                     if check_details:
                         result['Check_Details'] = check_details
                 
-                # Filter out lines containing "INFO" from capturedTestOutput
-                captured_output = test.get('capturedTestOutput', '')
-                if captured_output:
-                    output_lines = captured_output.strip().split('\n')
-                    filtered_output = [line for line in output_lines if "INFO" not in line]
-                    filtered_output_str = '\n'.join(filtered_output)
-                else:
-                    filtered_output_str = ''
-                
-                # Exclude 'Capture_Output' if state is 'passed'
-                if test.get('state') != 'passed':
+                # Handle Capture_Output based on test state
+                if test.get('state') == 'skipped':
+                    # For skipped tests, include skipReason in Capture_Output
+                    skip_reason = test.get('skipReason', '')
+                    if skip_reason:
+                        result['Capture_Output'] = f"SKIP REASON: {skip_reason}"
+                    else:
+                        result['Capture_Output'] = "SKIPPED (no reason provided)"
+                    result['Best_Practice_Link'] = test.get('catalogInfo', {}).get('bestPracticeReference', '')
+                elif test.get('state') != 'passed':
+                    # For failed/error tests, filter out lines containing "INFO" from capturedTestOutput
+                    captured_output = test.get('capturedTestOutput', '')
+                    if captured_output:
+                        output_lines = captured_output.strip().split('\n')
+                        filtered_output = [line for line in output_lines if "INFO" not in line]
+                        filtered_output_str = '\n'.join(filtered_output)
+                    else:
+                        filtered_output_str = ''
+                    
                     result['Capture_Output'] = filtered_output_str
                     result['Best_Practice_Link'] = test.get('catalogInfo', {}).get('bestPracticeReference', '')
 
