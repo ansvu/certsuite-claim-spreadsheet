@@ -3,6 +3,8 @@ import argparse
 import json, os, sys
 import re, fileinput
 import subprocess
+import urllib.request
+import urllib.error
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -30,7 +32,74 @@ def replace_text_in_file(input_file: str, search_text: str, replace_text: str, o
         # Write the modified data to the output file
         f.write(newdata)
 
-def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int, int, int, int]:
+def fetch_catalog_from_github(github_url: str = "https://raw.githubusercontent.com/redhat-best-practices-for-k8s/certsuite/main/CATALOG.md") -> str:
+    """Fetch the latest CATALOG.md content from GitHub."""
+    try:
+        print(f"Fetching latest CATALOG.md from GitHub...")
+        with urllib.request.urlopen(github_url) as response:
+            content = response.read().decode('utf-8')
+        print(f"✓ Successfully fetched CATALOG.md from GitHub ({len(content)} characters)")
+        return content
+    except urllib.error.URLError as e:
+        print(f"Warning: Could not fetch CATALOG.md from GitHub: {e}")
+        print("Falling back to local CATALOG.md file...")
+        return None
+    except Exception as e:
+        print(f"Warning: Error fetching CATALOG.md from GitHub: {e}")
+        print("Falling back to local CATALOG.md file...")
+        return None
+
+def parse_catalog_impact_statements(catalog_path: str = "CATALOG.md") -> Dict[str, str]:
+    """Parse CATALOG.md file to extract Impact Statements for each test ID."""
+    impact_statements = {}
+    content = None
+    
+    # First try to fetch from GitHub
+    content = fetch_catalog_from_github()
+    
+    # If GitHub fetch failed, try local file
+    if content is None:
+        if not os.path.exists(catalog_path):
+            print(f"Warning: CATALOG.md not found at {catalog_path}. Impact Statements will be empty.")
+            return impact_statements
+        
+        try:
+            with open(catalog_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            print(f"✓ Using local CATALOG.md file")
+        except Exception as e:
+            print(f"Warning: Error reading local CATALOG.md: {e}. Impact Statements will be empty.")
+            return impact_statements
+    
+    # Parse the content (whether from GitHub or local file)
+    try:
+        # Split content by test case sections (#### headers)
+        test_sections = re.split(r'\n#### ([^\n]+)', content)
+        
+        for i in range(1, len(test_sections), 2):  # Skip first element, then process pairs
+            if i + 1 < len(test_sections):
+                test_name = test_sections[i].strip()
+                test_content = test_sections[i + 1]
+                
+                # Extract Unique ID from the table
+                unique_id_match = re.search(r'\|Unique ID\|([^|]+)\|', test_content)
+                if unique_id_match:
+                    unique_id = unique_id_match.group(1).strip()
+                    
+                    # Extract Impact Statement from the table
+                    impact_match = re.search(r'\|Impact Statement\|([^|]+)\|', test_content)
+                    if impact_match:
+                        impact_statement = impact_match.group(1).strip()
+                        impact_statements[unique_id] = impact_statement
+                        
+        print(f"✓ Loaded {len(impact_statements)} Impact Statements from CATALOG.md")
+        return impact_statements
+        
+    except Exception as e:
+        print(f"Warning: Error parsing CATALOG.md: {e}. Impact Statements will be empty.")
+        return impact_statements
+
+def extract_test_results(data: Dict[str, Any], impact_statements: Dict[str, str] = None) -> Tuple[List[Dict[str, Any]], int, int, int, int]:
     """Extract and process test results from the claim data."""
     try:
         results = []
@@ -52,6 +121,7 @@ def extract_test_results(data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], in
                     'Suite': test_id_info.get('suite', 'unknown'),  # Add suite information
                     'Tags': test_id_info.get('tags', ''),  # Add tags which might indicate mandatory/optional
                     'Category_Classification': ', '.join(f"{k}: {v}" for k, v in test.get('categoryClassification', {}).items()),
+                    'Impact_Statement': impact_statements.get(test_id_info.get('id', ''), '') if impact_statements else '',
                     'Exception_Process': test.get('catalogInfo', {}).get('exceptionProcess', ''),
                     'Remediation': test.get('catalogInfo', {}).get('remediation', '')
                 }
@@ -181,7 +251,7 @@ def create_workbook_and_worksheet(output_file: str, input_file: str) -> Tuple[op
 def add_test_results_to_worksheet(ws: Worksheet, sorted_tests: List[Dict[str, Any]]) -> None:
     """Add test results to the worksheet."""
     # Define column headers - add Check_Details after State
-    headers = ['Test_Id', 'Test_Text', 'State', 'Check_Details', 'Capture_Output', 'Category_Classification', 'Exception_Process', 'Remediation', 'Best_Practice_Link']
+    headers = ['Test_Id', 'Test_Text', 'State', 'Check_Details', 'Capture_Output', 'Category_Classification', 'Impact_Statement', 'Exception_Process', 'Remediation', 'Best_Practice_Link']
     
     # Add headers to worksheet
     ws.append(headers)
@@ -197,7 +267,7 @@ def add_test_results_to_worksheet(ws: Worksheet, sorted_tests: List[Dict[str, An
 
 def style_header_row(ws: Worksheet, header_row_num: int, styles: Dict[str, Any]) -> None:
     """Style the header row with blue background and white text."""
-    for col in range(1, 10):  # Columns A through I
+    for col in range(1, 11):  # Columns A through J
         cell = ws.cell(row=header_row_num, column=col)
         cell.font = styles['header_font']
         cell.fill = styles['blue_fill']
@@ -479,9 +549,10 @@ def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
     ws.column_dimensions['D'].width = 100  # Check_Details column
     ws.column_dimensions['E'].width = 80   # Capture_Output (was column D, now E)
     ws.column_dimensions['F'].width = 77   # Category_Classification (was column E, now F)
-    ws.column_dimensions['G'].width = 100  # Exception_Process (was column F, now G)
-    ws.column_dimensions['H'].width = 100  # Remediation (was column G, now H)
-    ws.column_dimensions['I'].width = 100  # Best_Practice_Link (was column H, now I)
+    ws.column_dimensions['G'].width = 90   # Impact_Statement (new column G)
+    ws.column_dimensions['H'].width = 100  # Exception_Process (was column F, now H)
+    ws.column_dimensions['I'].width = 100  # Remediation (was column G, now I)
+    ws.column_dimensions['J'].width = 100  # Best_Practice_Link (was column H, now J)
     ws.column_dimensions['C'].width = 12   # State column
 
     # Set special font for Category Classification (now column F)
@@ -490,7 +561,7 @@ def apply_final_formatting(ws: Worksheet, styles: Dict[str, Any]) -> None:
     mandatory_font = InlineFont(color='006400')           # Dark green for Mandatory
     optional_font = InlineFont(color='FF8C00')            # Orange for Optional
     
-    for row in ws.iter_rows(min_row=12, max_row=ws.max_row, min_col=1, max_col=9):  # Data starts at row 12
+    for row in ws.iter_rows(min_row=12, max_row=ws.max_row, min_col=1, max_col=10):  # Data starts at row 12
         for cell in row:
             # Check if this is the Category_Classification column (column F)
             if cell.column == 6 and cell.value:  # Column F = Category_Classification
@@ -573,8 +644,11 @@ def generate_cert_test_excel_report(input_claim: str, output_file: str, dci_jobi
         if 'results' not in data.get('claim', {}):
             raise ValueError("Invalid claim file: missing 'results' section")
 
+        # Parse impact statements from CATALOG.md
+        impact_statements = parse_catalog_impact_statements()
+        
         # Extract test results and process them
-        sorted_tests, total_failed, total_error, total_skipped, total_passed = extract_test_results(data)
+        sorted_tests, total_failed, total_error, total_skipped, total_passed = extract_test_results(data, impact_statements)
 
         # Create workbook and worksheet
         wb, ws = create_workbook_and_worksheet(output_file, input_claim)
